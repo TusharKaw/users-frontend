@@ -36,6 +36,28 @@ export function getDatabase(): Database.Database {
 }
 
 function initializeSchema(database: Database.Database) {
+  // Users table
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS users (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      username TEXT NOT NULL UNIQUE,
+      email TEXT NOT NULL UNIQUE,
+      password TEXT NOT NULL,
+      realname TEXT,
+      createdAt DATETIME DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+
+  // Sessions table
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS sessions (
+      sessionId TEXT PRIMARY KEY,
+      userId INTEGER NOT NULL,
+      expiresAt INTEGER NOT NULL,
+      FOREIGN KEY (userId) REFERENCES users(id) ON DELETE CASCADE
+    )
+  `);
+
   // Comments table
   database.exec(`
     CREATE TABLE IF NOT EXISTS comments (
@@ -70,6 +92,10 @@ function initializeSchema(database: Database.Database) {
 
   // Create indexes for better performance
   database.exec(`
+    CREATE INDEX IF NOT EXISTS idx_users_username ON users(username);
+    CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
+    CREATE INDEX IF NOT EXISTS idx_sessions_userId ON sessions(userId);
+    CREATE INDEX IF NOT EXISTS idx_sessions_expiresAt ON sessions(expiresAt);
     CREATE INDEX IF NOT EXISTS idx_comments_pageId ON comments(pageId);
     CREATE INDEX IF NOT EXISTS idx_ratings_pageId ON ratings(pageId);
     CREATE INDEX IF NOT EXISTS idx_ratings_pageId_author ON ratings(pageId, author);

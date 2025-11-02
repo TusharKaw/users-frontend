@@ -1,34 +1,76 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { ratePage, getRating, Rating } from '@/lib/mediawiki';
 import useSWR from 'swr';
+import axios from 'axios';
+import Link from 'next/link';
 
 interface RatingStarsProps {
   pageId: number;
   pageTitle?: string;
 }
 
+interface User {
+  id: number;
+  username: string;
+  email: string;
+  realname?: string;
+}
+
 export default function RatingStars({ pageId, pageTitle }: RatingStarsProps) {
   const [hoveredRating, setHoveredRating] = useState(0);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [user, setUser] = useState<User | null>(null);
 
+  // Get current user
+  useEffect(() => {
+    axios.get('/api/auth/user', {
+      withCredentials: true,
+    })
+      .then((response) => {
+        if (response.data.loggedIn && response.data.user) {
+          setUser(response.data.user);
+        }
+      })
+      .catch(() => {
+        // User not logged in - that's okay
+      });
+  }, []);
+
+  // Get rating with current user's identity
+  // Use user's username/realname as the author identifier
+  const author = user ? (user.realname || user.username) : undefined;
+  
+  // Cache key should change when user changes to get fresh data
+  const cacheKey = `rating-${pageId}-${user ? user.id : 'anonymous'}`;
+  
   const { data: rating, mutate } = useSWR<Rating>(
-    `rating-${pageId}`,
-    () => getRating(pageId),
+    cacheKey,
+    () => getRating(pageId, author),
     {
       revalidateOnFocus: false,
       refreshInterval: 30000, // Refresh every 30 seconds
     }
   );
 
+  // Refetch rating when user changes
+  useEffect(() => {
+    if (user || !user) {
+      mutate();
+    }
+  }, [user?.id, mutate]);
+
   const handleRatingClick = async (ratingValue: number) => {
     if (isSubmitting) return;
 
     setIsSubmitting(true);
     setError(null);
-    const result = await ratePage(pageId, ratingValue, pageTitle || `Page ${pageId}`);
+    
+    // Pass the current user's username (or undefined for anonymous)
+    const authorName = user ? (user.realname || user.username) : undefined;
+    const result = await ratePage(pageId, ratingValue, pageTitle || `Page ${pageId}`, authorName);
     
     if (result.success) {
       // Force immediate revalidation of rating data
@@ -83,9 +125,26 @@ export default function RatingStars({ pageId, pageTitle }: RatingStarsProps) {
             <span className="text-sm text-gray-500 ml-1">
               ({rating.count} {rating.count === 1 ? 'rating' : 'ratings'})
             </span>
+            {rating.userRating && (
+              <span className="text-sm text-primary-600 ml-2 font-medium">
+                (Your rating: {rating.userRating}★)
+              </span>
+            )}
           </div>
         )}
       </div>
+
+      {user && !rating?.userRating && (
+        <p className="text-sm text-gray-500 mb-2">
+          Click a star to rate as {user.realname || user.username}
+        </p>
+      )}
+      
+      {!user && (
+        <p className="text-sm text-gray-500 mb-2">
+          <Link href="/login" className="text-primary-600 hover:text-primary-700">Login</Link> to save your rating
+        </p>
+      )}
 
       {isSubmitting && (
         <p className="text-sm text-gray-500">Submitting rating...</p>

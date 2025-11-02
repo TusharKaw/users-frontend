@@ -1,18 +1,28 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { getComments, addComment, Comment } from '@/lib/mediawiki';
 import useSWR from 'swr';
+import axios from 'axios';
 
 interface CommentSectionProps {
   pageId: number;
   pageTitle?: string;
 }
 
+interface User {
+  id: number;
+  username: string;
+  email: string;
+  realname?: string;
+}
+
 export default function CommentSection({ pageId, pageTitle }: CommentSectionProps) {
   const [commentText, setCommentText] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [user, setUser] = useState<User | null>(null);
+  const [postAnonymous, setPostAnonymous] = useState(false);
 
   const { data: comments = [], mutate } = useSWR<Comment[]>(
     `comments-${pageId}`,
@@ -23,6 +33,21 @@ export default function CommentSection({ pageId, pageTitle }: CommentSectionProp
     }
   );
 
+  useEffect(() => {
+    // Get current user info
+    axios.get('/api/auth/user', {
+      withCredentials: true,
+    })
+      .then((response) => {
+        if (response.data.loggedIn && response.data.user) {
+          setUser(response.data.user);
+        }
+      })
+      .catch(() => {
+        // User not logged in - that's okay
+      });
+  }, []);
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
@@ -30,7 +55,11 @@ export default function CommentSection({ pageId, pageTitle }: CommentSectionProp
     if (!commentText.trim() || isSubmitting) return;
 
     setIsSubmitting(true);
-    const result = await addComment(pageId, commentText.trim(), pageTitle || `Page ${pageId}`);
+    
+    // Determine author: use username if logged in and not posting anonymous, otherwise Anonymous
+    const author = (user && !postAnonymous) ? (user.realname || user.username) : 'Anonymous';
+    
+    const result = await addComment(pageId, commentText.trim(), pageTitle || `Page ${pageId}`, author);
     
     if (result.success) {
       setCommentText('');
@@ -65,6 +94,11 @@ export default function CommentSection({ pageId, pageTitle }: CommentSectionProp
       </h3>
 
       <form onSubmit={handleSubmit} className="mb-6">
+        {user && (
+          <div className="mb-3 text-sm text-gray-600">
+            Posting as: <span className="font-medium text-gray-900">{user.realname || user.username}</span>
+          </div>
+        )}
         <textarea
           value={commentText}
           onChange={(e) => setCommentText(e.target.value)}
@@ -73,6 +107,20 @@ export default function CommentSection({ pageId, pageTitle }: CommentSectionProp
           className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent mb-3"
           disabled={isSubmitting}
         />
+        {user && (
+          <div className="mb-3 flex items-center">
+            <input
+              type="checkbox"
+              id="postAnonymous"
+              checked={postAnonymous}
+              onChange={(e) => setPostAnonymous(e.target.checked)}
+              className="mr-2 h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300 rounded"
+            />
+            <label htmlFor="postAnonymous" className="text-sm text-gray-700 cursor-pointer">
+              Post as Anonymous
+            </label>
+          </div>
+        )}
         {error && (
           <div className="mb-3 bg-red-50 border border-red-200 rounded-lg p-3">
             <p className="text-red-800 text-sm">{error}</p>

@@ -6,7 +6,17 @@ export async function GET(request: NextRequest) {
   try {
     const searchParams = request.nextUrl.searchParams;
     const pageId = searchParams.get('pageId');
-    const author = searchParams.get('author'); // Optional: to get user's rating
+    let author = searchParams.get('author'); // Optional: to get user's rating
+
+    // If no author provided, try to get current logged-in user
+    if (!author) {
+      const { getCurrentUser } = await import('@/lib/auth');
+      const sessionId = request.cookies.get('sessionId')?.value;
+      const currentUser = await getCurrentUser(sessionId);
+      if (currentUser) {
+        author = currentUser.realname || currentUser.username;
+      }
+    }
 
     if (!pageId) {
       return NextResponse.json(
@@ -61,7 +71,7 @@ export async function GET(request: NextRequest) {
 // POST /api/ratings
 export async function POST(request: NextRequest) {
   try {
-    const { pageId, pageTitle, rating, author } = await request.json();
+    const { pageId, pageTitle, rating, author: providedAuthor } = await request.json();
 
     if (!pageId || !rating) {
       return NextResponse.json(
@@ -77,12 +87,25 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Get current user if author not provided
+    let author = providedAuthor;
+    if (!author) {
+      const { getCurrentUser } = await import('@/lib/auth');
+      const sessionId = request.cookies.get('sessionId')?.value;
+      const currentUser = await getCurrentUser(sessionId);
+      if (currentUser) {
+        author = currentUser.realname || currentUser.username;
+      } else {
+        author = 'Anonymous';
+      }
+    }
+
     const db = getDatabase();
     
     // Check if rating already exists for this user (using the unique index)
     const existingRating = db
       .prepare('SELECT id FROM ratings WHERE pageId = ? AND author = ?')
-      .get(parseInt(pageId), author || 'Anonymous') as { id: number } | undefined;
+      .get(parseInt(pageId), author) as { id: number } | undefined;
 
     if (existingRating) {
       // Update existing rating
@@ -98,14 +121,14 @@ export async function POST(request: NextRequest) {
           parseInt(pageId),
           pageTitle || `Page ${pageId}`,
           Math.round(rating),
-          author || 'Anonymous'
+          author
         );
       } catch (error: any) {
         // If unique constraint violation, update instead
         if (error.code === 'SQLITE_CONSTRAINT_UNIQUE' || error.message.includes('UNIQUE')) {
           db.prepare(
             'UPDATE ratings SET rating = ?, updatedAt = CURRENT_TIMESTAMP WHERE pageId = ? AND author = ?'
-          ).run(Math.round(rating), parseInt(pageId), author || 'Anonymous');
+          ).run(Math.round(rating), parseInt(pageId), author);
         } else {
           throw error;
         }
