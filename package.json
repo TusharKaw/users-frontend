@@ -9,10 +9,12 @@
     "lint": "next lint"
   },
   "dependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "axios": "^1.7.2",
+    "better-sqlite3": "^12.4.1",
     "next": "14.2.5",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
-    "axios": "^1.7.2",
     "swr": "^2.2.5"
   },
   "devDependencies": {
@@ -27,4 +29,3 @@
     "typescript": "^5.5.3"
   }
 }
-

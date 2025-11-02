@@ -47,32 +47,73 @@ export interface Rating {
  */
 export async function getArticle(slug: string): Promise<MediaWikiPage | null> {
   try {
-    const response = await axios.get<MediaWikiQueryResponse>(API_URL, {
+    // First, get page info and images
+    const pageResponse = await axios.get<MediaWikiQueryResponse>(API_URL, {
       params: {
         action: 'query',
-        prop: 'extracts|pageimages',
+        prop: 'pageimages|revisions',
         titles: slug,
         format: 'json',
-        explaintext: false,
-        exintro: false,
         piprop: 'thumbnail|original',
         pithumbsize: 400,
+        rvprop: 'content',
+        rvslots: 'main',
         origin: '*',
       },
     });
 
-    if (response.data.error) {
-      console.error('MediaWiki API error:', response.data.error);
+    if (pageResponse.data.error) {
+      console.error('MediaWiki API error:', pageResponse.data.error);
       return null;
     }
 
-    const pages = response.data.query?.pages;
+    const pages = pageResponse.data.query?.pages;
     if (!pages) return null;
 
-    const page = Object.values(pages)[0];
-    if (!page || page.pageid === undefined) return null;
+    const pageData = Object.values(pages)[0] as any;
+    if (!pageData || pageData.pageid === undefined) return null;
 
-    return page;
+    // Get parsed HTML content using parse action
+    let extract = '';
+    try {
+      const parseResponse = await axios.get(API_URL, {
+        params: {
+          action: 'parse',
+          page: slug,
+          format: 'json',
+          prop: 'text',
+          disablelimitreport: true,
+          origin: '*',
+        },
+      });
+
+      if (parseResponse.data?.parse?.text?.['*']) {
+        extract = parseResponse.data.parse.text['*'];
+      }
+    } catch (parseError) {
+      console.warn('Failed to get parsed content, trying revisions:', parseError);
+      // Fallback: use raw wikitext from revisions if parse fails
+      const revisions = pageData.revisions;
+      if (revisions && revisions[0]?.slots?.main?.content) {
+        extract = revisions[0].slots.main.content;
+      }
+    }
+
+    return {
+      pageid: pageData.pageid,
+      title: pageData.title,
+      extract: extract || undefined,
+      thumbnail: pageData.thumbnail ? {
+        source: pageData.thumbnail.source,
+        width: pageData.thumbnail.width || 0,
+        height: pageData.thumbnail.height || 0,
+      } : undefined,
+      original: pageData.original ? {
+        source: pageData.original.source,
+        width: pageData.original.width || 0,
+        height: pageData.original.height || 0,
+      } : undefined,
+    };
   } catch (error) {
     console.error('Error fetching article:', error);
     return null;
@@ -111,12 +152,9 @@ export async function getTopPages(limit: number = 10): Promise<MediaWikiPage[]> 
     const pagesResponse = await axios.get<MediaWikiQueryResponse>(API_URL, {
       params: {
         action: 'query',
-        prop: 'extracts|pageimages',
+        prop: 'pageimages',
         titles: titles,
         format: 'json',
-        explaintext: true,
-        exintro: true,
-        exchars: 200,
         piprop: 'thumbnail',
         pithumbsize: 200,
         origin: '*',
@@ -126,7 +164,19 @@ export async function getTopPages(limit: number = 10): Promise<MediaWikiPage[]> 
     const pages = pagesResponse.data.query?.pages;
     if (!pages) return [];
 
-    return Object.values(pages).filter((p): p is MediaWikiPage => p.pageid !== undefined);
+    // Map pages and add basic extract (just title for now, can be enhanced later)
+    return Object.values(pages)
+      .filter((p: any): p is MediaWikiPage => p.pageid !== undefined)
+      .map((p: any) => ({
+        pageid: p.pageid,
+        title: p.title,
+        extract: '', // Empty for list view
+        thumbnail: p.thumbnail ? {
+          source: p.thumbnail.source,
+          width: p.thumbnail.width || 0,
+          height: p.thumbnail.height || 0,
+        } : undefined,
+      }));
   } catch (error) {
     console.error('Error fetching top pages:', error);
     return await getRecentPages(limit);
@@ -156,12 +206,9 @@ async function getRecentPages(limit: number): Promise<MediaWikiPage[]> {
     const pagesResponse = await axios.get<MediaWikiQueryResponse>(API_URL, {
       params: {
         action: 'query',
-        prop: 'extracts|pageimages',
+        prop: 'pageimages',
         titles: titles,
         format: 'json',
-        explaintext: true,
-        exintro: true,
-        exchars: 200,
         piprop: 'thumbnail',
         pithumbsize: 200,
         origin: '*',
@@ -171,7 +218,19 @@ async function getRecentPages(limit: number): Promise<MediaWikiPage[]> {
     const pages = pagesResponse.data.query?.pages;
     if (!pages) return [];
 
-    return Object.values(pages).filter((p): p is MediaWikiPage => p.pageid !== undefined);
+    // Map pages and add basic extract (empty for list view)
+    return Object.values(pages)
+      .filter((p: any): p is MediaWikiPage => p.pageid !== undefined)
+      .map((p: any) => ({
+        pageid: p.pageid,
+        title: p.title,
+        extract: '', // Empty for list view
+        thumbnail: p.thumbnail ? {
+          source: p.thumbnail.source,
+          width: p.thumbnail.width || 0,
+          height: p.thumbnail.height || 0,
+        } : undefined,
+      }));
   } catch (error) {
     console.error('Error fetching recent pages:', error);
     return [];
@@ -201,12 +260,9 @@ export async function searchPages(query: string, limit: number = 10): Promise<Me
     const pagesResponse = await axios.get<MediaWikiQueryResponse>(API_URL, {
       params: {
         action: 'query',
-        prop: 'extracts|pageimages',
+        prop: 'pageimages',
         titles: titles,
         format: 'json',
-        explaintext: true,
-        exintro: true,
-        exchars: 200,
         piprop: 'thumbnail',
         pithumbsize: 200,
         origin: '*',
@@ -216,7 +272,19 @@ export async function searchPages(query: string, limit: number = 10): Promise<Me
     const pages = pagesResponse.data.query?.pages;
     if (!pages) return [];
 
-    return Object.values(pages).filter((p): p is MediaWikiPage => p.pageid !== undefined);
+    // Map pages and add basic extract (empty for list view)
+    return Object.values(pages)
+      .filter((p: any): p is MediaWikiPage => p.pageid !== undefined)
+      .map((p: any) => ({
+        pageid: p.pageid,
+        title: p.title,
+        extract: '', // Empty for list view
+        thumbnail: p.thumbnail ? {
+          source: p.thumbnail.source,
+          width: p.thumbnail.width || 0,
+          height: p.thumbnail.height || 0,
+        } : undefined,
+      }));
   } catch (error) {
     console.error('Error searching pages:', error);
     return [];
@@ -224,182 +292,158 @@ export async function searchPages(query: string, limit: number = 10): Promise<Me
 }
 
 /**
- * Get comments for a page (using CommentStreams extension)
+ * Get comments for a page (stored in local database)
  */
 export async function getComments(pageId: number): Promise<Comment[]> {
   try {
-    // CommentStreams API endpoint (adjust based on your extension setup)
-    const response = await axios.get(API_URL, {
+    // Call local API route
+    const response = await axios.get('/api/comments', {
       params: {
-        action: 'comments',
-        pageid: pageId,
-        format: 'json',
-        origin: '*',
+        pageId: pageId,
       },
     });
 
-    // Adjust response structure based on CommentStreams API format
-    const comments = (response.data as any).query?.comments || (response.data as any).comments || [];
+    if (response.data.error) {
+      console.error('Comments API error:', response.data.error);
+      return [];
+    }
+
+    // Map database comments to Comment interface
+    const comments = response.data.comments || [];
     return comments.map((c: any) => ({
-      id: c.id || c.commentid || 0,
-      pageId: pageId,
-      text: c.text || c.comment || '',
-      author: c.author || c.user || 'Anonymous',
-      timestamp: c.timestamp || c.created || '',
+      id: c.id || 0,
+      pageId: c.pageId || pageId,
+      text: c.text || '',
+      author: c.author || 'Anonymous',
+      timestamp: c.createdAt || c.timestamp || new Date().toISOString(),
     }));
   } catch (error) {
     console.error('Error fetching comments:', error);
-    // Return empty array if comments extension is not available
     return [];
   }
 }
 
 /**
- * Add a comment to a page
+ * Add a comment to a page (stored in local database)
  */
-export async function addComment(pageId: number, text: string, token?: string): Promise<boolean> {
+export async function addComment(pageId: number, text: string, pageTitle?: string, author?: string): Promise<{ success: boolean; error?: string }> {
   try {
-    // First, get edit token if not provided
-    let editToken = token;
-    if (!editToken) {
-      const tokenResponse = await axios.get(API_URL, {
-        params: {
-          action: 'query',
-          meta: 'tokens',
-          type: 'csrf',
-          format: 'json',
-          origin: '*',
-        },
-      });
-      editToken = (tokenResponse.data as any).query?.tokens?.csrftoken || '';
-    }
-
-    // Add comment via CommentStreams API
-    const response = await axios.post(API_URL, null, {
-      params: {
-        action: 'comment',
-        pageid: pageId,
-        text: text,
-        token: editToken,
-        format: 'json',
-        origin: '*',
-      },
+    // Call local API route
+    const response = await axios.post('/api/comments', {
+      pageId,
+      pageTitle: pageTitle || `Page ${pageId}`,
+      text,
+      author: author || 'Anonymous',
     });
 
-    return !response.data.error;
-  } catch (error) {
-    console.error('Error adding comment:', error);
-    return false;
+    if (response.data.error) {
+      const errorMsg = typeof response.data.error === 'string' 
+        ? response.data.error 
+        : response.data.error || 'Failed to add comment';
+      console.error('Error adding comment:', errorMsg);
+      return { success: false, error: errorMsg };
+    }
+
+    return { success: response.data.success === true };
+  } catch (error: any) {
+    const errorMsg = error.response?.data?.error || error.message || 'Failed to add comment';
+    console.error('Error adding comment:', errorMsg, error.response?.data);
+    return { 
+      success: false, 
+      error: typeof errorMsg === 'string' ? errorMsg : 'Failed to add comment'
+    };
   }
 }
 
 /**
- * Get rating for a page (using PageRating/VoteNY extension)
+ * Get rating for a page (stored in local database)
  */
-export async function getRating(pageId: number): Promise<Rating> {
+export async function getRating(pageId: number, author?: string): Promise<Rating> {
   try {
-    // Adjust endpoint based on your rating extension (VoteNY, PageRating, etc.)
-    const response = await axios.get(API_URL, {
+    // Call local API route
+    const response = await axios.get('/api/ratings', {
       params: {
-        action: 'pagerating',
-        pageid: pageId,
-        format: 'json',
-        origin: '*',
+        pageId: pageId,
+        ...(author && { author }),
       },
     });
 
-    // Adjust response structure based on your rating extension
-    const data = response.data;
-    if (data.error) {
+    if (response.data.error) {
+      console.error('Ratings API error:', response.data.error);
       return { average: 0, count: 0 };
     }
 
     return {
-      average: data.average || data.rating?.average || 0,
-      count: data.count || data.rating?.count || 0,
-      userRating: data.userRating || data.rating?.userRating,
+      average: response.data.average || 0,
+      count: response.data.count || 0,
+      userRating: response.data.userRating,
     };
   } catch (error) {
-    // Return default if rating extension is not available
+    console.error('Error fetching ratings:', error);
     return { average: 0, count: 0 };
   }
 }
 
 /**
- * Rate a page (using PageRating/VoteNY extension)
+ * Rate a page (stored in local database)
  */
-export async function ratePage(pageId: number, rating: number, token?: string): Promise<boolean> {
+export async function ratePage(pageId: number, rating: number, pageTitle?: string, author?: string): Promise<{ success: boolean; error?: string }> {
   try {
-    // First, get edit token if not provided
-    let editToken = token;
-    if (!editToken) {
-      const tokenResponse = await axios.get(API_URL, {
-        params: {
-          action: 'query',
-          meta: 'tokens',
-          type: 'csrf',
-          format: 'json',
-          origin: '*',
-        },
-      });
-      editToken = (tokenResponse.data as any).query?.tokens?.csrftoken || '';
-    }
-
-    // Submit rating via rating extension API
-    const response = await axios.post(API_URL, null, {
-      params: {
-        action: 'pagerating',
-        pageid: pageId,
-        rating: rating,
-        token: editToken,
-        format: 'json',
-        origin: '*',
-      },
+    // Call local API route
+    const response = await axios.post('/api/ratings', {
+      pageId,
+      pageTitle: pageTitle || `Page ${pageId}`,
+      rating,
+      author: author || 'Anonymous',
     });
 
-    return !response.data.error;
-  } catch (error) {
-    console.error('Error rating page:', error);
-    return false;
+    if (response.data.error) {
+      const errorMsg = typeof response.data.error === 'string' 
+        ? response.data.error 
+        : response.data.error || 'Failed to submit rating';
+      console.error('Error rating page:', errorMsg);
+      return { success: false, error: errorMsg };
+    }
+
+    return { success: response.data.success === true };
+  } catch (error: any) {
+    const errorMsg = error.response?.data?.error || error.message || 'Failed to submit rating';
+    console.error('Error rating page:', errorMsg, error.response?.data);
+    return { 
+      success: false, 
+      error: typeof errorMsg === 'string' ? errorMsg : 'Failed to submit rating'
+    };
   }
 }
 
 /**
  * Create a new page
  */
-export async function createPage(title: string, content: string, token?: string): Promise<boolean> {
+export async function createPage(title: string, content: string, token?: string): Promise<{ success: boolean; error?: string }> {
   try {
-    // First, get edit token if not provided
-    let editToken = token;
-    if (!editToken) {
-      const tokenResponse = await axios.get(API_URL, {
-        params: {
-          action: 'query',
-          meta: 'tokens',
-          type: 'csrf',
-          format: 'json',
-          origin: '*',
-        },
-      });
-      editToken = (tokenResponse.data as any).query?.tokens?.csrftoken || '';
-    }
-
-    // Create page via edit API
-    const response = await axios.post(API_URL, null, {
-      params: {
-        action: 'edit',
-        title: title,
-        text: content,
-        token: editToken,
-        format: 'json',
-        origin: '*',
-      },
+    // Call Next.js API route which handles MediaWiki API call server-side
+    const response = await axios.post('/api/mediawiki/create', {
+      title,
+      content,
+      token,
     });
 
-    return !response.data.error;
-  } catch (error) {
-    console.error('Error creating page:', error);
-    return false;
+    if (response.data.error) {
+      const errorMsg = typeof response.data.error === 'string' 
+        ? response.data.error 
+        : response.data.error?.info || 'Failed to create page';
+      console.error('Error creating page:', errorMsg, response.data.details);
+      return { success: false, error: errorMsg };
+    }
+
+    return { success: response.data.success === true };
+  } catch (error: any) {
+    const errorMsg = error.response?.data?.error || error.message || 'Failed to create page';
+    console.error('Error creating page:', errorMsg, error.response?.data?.details);
+    return { 
+      success: false, 
+      error: typeof errorMsg === 'string' ? errorMsg : errorMsg?.info || 'Failed to create page'
+    };
   }
 }
 

@@ -6,11 +6,13 @@ import useSWR from 'swr';
 
 interface CommentSectionProps {
   pageId: number;
+  pageTitle?: string;
 }
 
-export default function CommentSection({ pageId }: CommentSectionProps) {
+export default function CommentSection({ pageId, pageTitle }: CommentSectionProps) {
   const [commentText, setCommentText] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const { data: comments = [], mutate } = useSWR<Comment[]>(
     `comments-${pageId}`,
@@ -23,17 +25,19 @@ export default function CommentSection({ pageId }: CommentSectionProps) {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setError(null);
     
     if (!commentText.trim() || isSubmitting) return;
 
     setIsSubmitting(true);
-    const success = await addComment(pageId, commentText.trim());
+    const result = await addComment(pageId, commentText.trim(), pageTitle || `Page ${pageId}`);
     
-    if (success) {
+    if (result.success) {
       setCommentText('');
-      mutate(); // Revalidate comments
+      // Force immediate revalidation to show new comment
+      mutate(undefined, { revalidate: true });
     } else {
-      alert('Failed to submit comment. Please try again.');
+      setError(result.error || 'Failed to submit comment. Please try again.');
     }
     
     setIsSubmitting(false);
@@ -69,6 +73,11 @@ export default function CommentSection({ pageId }: CommentSectionProps) {
           className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent mb-3"
           disabled={isSubmitting}
         />
+        {error && (
+          <div className="mb-3 bg-red-50 border border-red-200 rounded-lg p-3">
+            <p className="text-red-800 text-sm">{error}</p>
+          </div>
+        )}
         <button
           type="submit"
           disabled={!commentText.trim() || isSubmitting}

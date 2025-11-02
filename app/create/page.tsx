@@ -37,18 +37,18 @@ export default function CreatePage() {
         ? `${formData.description}\n\n${formData.body}`
         : formData.body;
 
-      const success = await createPage(formData.title.trim(), content);
+      const result = await createPage(formData.title.trim(), content);
 
-      if (success) {
+      if (result.success) {
         // Navigate to the new page
         const slug = encodeURIComponent(formData.title.trim().replace(/\s+/g, '_'));
         router.push(`/${slug}`);
       } else {
-        setError('Failed to create page. Please try again.');
+        setError(result.error || 'Failed to create page. Please try again.');
         setIsSubmitting(false);
       }
-    } catch (err) {
-      setError('An error occurred while creating the page.');
+    } catch (err: any) {
+      setError(err?.message || 'An error occurred while creating the page.');
       setIsSubmitting(false);
     }
   };

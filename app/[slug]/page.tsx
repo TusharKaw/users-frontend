@@ -63,9 +63,9 @@ export default async function ArticlePage({ params }: ArticlePageProps) {
         </div>
       </article>
 
-      <RatingStars pageId={page.pageid} />
+      <RatingStars pageId={page.pageid} pageTitle={page.title} />
 
-      <CommentSection pageId={page.pageid} />
+      <CommentSection pageId={page.pageid} pageTitle={page.title} />
     </div>
   );
 }

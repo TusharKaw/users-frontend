@@ -6,11 +6,13 @@ import useSWR from 'swr';
 
 interface RatingStarsProps {
   pageId: number;
+  pageTitle?: string;
 }
 
-export default function RatingStars({ pageId }: RatingStarsProps) {
+export default function RatingStars({ pageId, pageTitle }: RatingStarsProps) {
   const [hoveredRating, setHoveredRating] = useState(0);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const { data: rating, mutate } = useSWR<Rating>(
     `rating-${pageId}`,
@@ -25,11 +27,14 @@ export default function RatingStars({ pageId }: RatingStarsProps) {
     if (isSubmitting) return;
 
     setIsSubmitting(true);
-    const success = await ratePage(pageId, ratingValue);
+    setError(null);
+    const result = await ratePage(pageId, ratingValue, pageTitle || `Page ${pageId}`);
     
-    if (success) {
-      // Revalidate rating data
-      mutate();
+    if (result.success) {
+      // Force immediate revalidation of rating data
+      mutate(undefined, { revalidate: true });
+    } else {
+      setError(result.error || 'Failed to submit rating. Please try again.');
     }
     
     setIsSubmitting(false);
@@ -84,6 +89,12 @@ export default function RatingStars({ pageId }: RatingStarsProps) {
 
       {isSubmitting && (
         <p className="text-sm text-gray-500">Submitting rating...</p>
+      )}
+      
+      {error && (
+        <div className="mt-4 bg-red-50 border border-red-200 rounded-lg p-3">
+          <p className="text-red-800 text-sm">{error}</p>
+        </div>
       )}
     </div>
   );
