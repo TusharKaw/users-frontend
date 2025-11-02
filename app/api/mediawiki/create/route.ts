@@ -49,10 +49,18 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    if (!editToken || editToken === '+\\') {
+    // Handle MediaWiki's invalid token response
+    // MediaWiki returns '+\\' when anonymous editing is disabled or token is invalid
+    if (!editToken || editToken === '+\\' || editToken.length < 10) {
+      console.error('Invalid token received from MediaWiki:', editToken);
+      console.error('This usually means anonymous editing is disabled in MediaWiki');
       return NextResponse.json(
-        { error: 'Failed to get valid edit token. You may need to log in to MediaWiki.' },
-        { status: 401 }
+        { 
+          error: 'MediaWiki does not allow anonymous editing. Please enable anonymous editing in MediaWiki LocalSettings.php or log in to MediaWiki first.',
+          code: 'ANONYMOUS_EDITING_DISABLED',
+          details: 'Add this to your LocalSettings.php: $wgGroupPermissions[\'*\'][\'edit\'] = true;'
+        },
+        { status: 403 }
       );
     }
 
@@ -74,10 +82,25 @@ export async function POST(request: NextRequest) {
     // Check for errors in response
     if (response.data.error) {
       console.error('MediaWiki edit error:', response.data.error);
+      const errorMsg = response.data.error.info || 'Failed to create page';
+      const errorCode = response.data.error.code;
+      
+      // Check for specific error codes
+      if (errorCode === 'permissiondenied' || errorCode === 'readonly' || errorMsg.includes('permission')) {
+        return NextResponse.json(
+          { 
+            error: 'You do not have permission to create pages. Please enable anonymous editing in MediaWiki or log in.',
+            code: errorCode,
+            details: 'Add to LocalSettings.php: $wgGroupPermissions[\'*\'][\'edit\'] = true; $wgGroupPermissions[\'*\'][\'createpage\'] = true;'
+          },
+          { status: 403 }
+        );
+      }
+      
       return NextResponse.json(
         { 
-          error: response.data.error.info || 'Failed to create page',
-          code: response.data.error.code,
+          error: errorMsg,
+          code: errorCode,
           details: response.data.error
         },
         { status: 400 }
@@ -90,14 +113,32 @@ export async function POST(request: NextRequest) {
         success: true, 
         data: response.data,
         pageId: response.data.edit.pageid,
-        newRevId: response.data.edit.newrevid
+        newRevId: response.data.edit.newrevid,
+        title: response.data.edit.title || response.data.edit.newtitle || title
       });
     }
 
+    // Check for warnings (page might have been created but with warnings)
+    if (response.data.edit && response.data.edit.warnings) {
+      console.warn('MediaWiki edit warnings:', response.data.edit.warnings);
+      // If it has a pageid, consider it successful
+      if (response.data.edit.pageid) {
+        return NextResponse.json({ 
+          success: true, 
+          data: response.data,
+          pageId: response.data.edit.pageid,
+          warnings: response.data.edit.warnings
+        });
+      }
+    }
+
     // If we get here, something unexpected happened
-    console.error('Unexpected response:', response.data);
+    console.error('Unexpected response from MediaWiki:', JSON.stringify(response.data, null, 2));
     return NextResponse.json(
-      { error: 'Unexpected response from MediaWiki API', data: response.data },
+      { 
+        error: 'Unexpected response from MediaWiki API. Check server logs for details.',
+        data: response.data 
+      },
       { status: 500 }
     );
   } catch (error: any) {
