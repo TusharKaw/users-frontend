@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import { getComments, addComment, Comment } from '@/lib/mediawiki';
 import useSWR from 'swr';
 import axios from 'axios';
+import CommentItem from './CommentItem';
 
 interface CommentSectionProps {
   pageId: number;
@@ -72,25 +73,19 @@ export default function CommentSection({ pageId, pageTitle }: CommentSectionProp
     setIsSubmitting(false);
   };
 
-  const formatDate = (timestamp: string) => {
-    try {
-      const date = new Date(timestamp);
-      return date.toLocaleDateString('en-US', {
-        year: 'numeric',
-        month: 'long',
-        day: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit',
-      });
-    } catch {
-      return timestamp;
-    }
+  // Count total comments including replies
+  const countTotalComments = (comments: Comment[]): number => {
+    return comments.reduce((count, comment) => {
+      return count + 1 + (comment.replies ? countTotalComments(comment.replies) : 0);
+    }, 0);
   };
+
+  const totalComments = countTotalComments(comments);
 
   return (
     <div className="bg-white rounded-lg shadow-md p-6 mt-6">
       <h3 className="text-lg font-semibold mb-4">
-        Comments ({comments.length})
+        Comments ({totalComments})
       </h3>
 
       <form onSubmit={handleSubmit} className="mb-6">
@@ -135,7 +130,7 @@ export default function CommentSection({ pageId, pageTitle }: CommentSectionProp
         </button>
       </form>
 
-      <div className="space-y-4">
+      <div className="space-y-6">
         {comments.length === 0 ? (
           <p className="text-gray-500 text-center py-8">
             No comments yet. Be the first to share your thoughts!
@@ -144,19 +139,17 @@ export default function CommentSection({ pageId, pageTitle }: CommentSectionProp
           comments.map((comment) => (
             <div
               key={comment.id}
-              className="border-b border-gray-200 pb-4 last:border-0 last:pb-0"
+              className="border-b border-gray-200 pb-6 last:border-0 last:pb-0"
             >
-              <div className="flex items-start justify-between mb-2">
-                <div className="font-medium text-gray-900">
-                  {comment.author || 'Anonymous'}
-                </div>
-                <div className="text-sm text-gray-500">
-                  {formatDate(comment.timestamp)}
-                </div>
-              </div>
-              <p className="text-gray-700 whitespace-pre-wrap">
-                {comment.text}
-              </p>
+              <CommentItem
+                comment={comment}
+                pageId={pageId}
+                pageTitle={pageTitle}
+                currentUser={user}
+                onReplySubmitted={() => {
+                  mutate(undefined, { revalidate: true });
+                }}
+              />
             </div>
           ))
         )}

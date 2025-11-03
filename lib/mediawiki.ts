@@ -34,6 +34,8 @@ export interface Comment {
   text: string;
   author: string;
   timestamp: string;
+  parentCommentId?: number | null;
+  replies?: Comment[];
 }
 
 export interface Rating {
@@ -308,14 +310,24 @@ export async function getComments(pageId: number): Promise<Comment[]> {
       return [];
     }
 
-    // Map database comments to Comment interface
+    // Map database comments to Comment interface (nested structure)
     const comments = response.data.comments || [];
-    return comments.map((c: any) => ({
+    return comments.map((c: any): Comment => ({
       id: c.id || 0,
       pageId: c.pageId || pageId,
       text: c.text || '',
       author: c.author || 'Anonymous',
       timestamp: c.createdAt || c.timestamp || new Date().toISOString(),
+      parentCommentId: c.parentCommentId || null,
+      replies: c.replies ? c.replies.map((r: any): Comment => ({
+        id: r.id || 0,
+        pageId: r.pageId || pageId,
+        text: r.text || '',
+        author: r.author || 'Anonymous',
+        timestamp: r.createdAt || r.timestamp || new Date().toISOString(),
+        parentCommentId: r.parentCommentId || null,
+        replies: r.replies || [],
+      })) : [],
     }));
   } catch (error) {
     console.error('Error fetching comments:', error);
@@ -326,7 +338,7 @@ export async function getComments(pageId: number): Promise<Comment[]> {
 /**
  * Add a comment to a page (stored in local database)
  */
-export async function addComment(pageId: number, text: string, pageTitle?: string, author?: string): Promise<{ success: boolean; error?: string }> {
+export async function addComment(pageId: number, text: string, pageTitle?: string, author?: string, parentCommentId?: number): Promise<{ success: boolean; error?: string }> {
   try {
     // Call local API route
     const response = await axios.post('/api/comments', {
@@ -334,6 +346,7 @@ export async function addComment(pageId: number, text: string, pageTitle?: strin
       pageTitle: pageTitle || `Page ${pageId}`,
       text,
       author: author || 'Anonymous',
+      parentCommentId: parentCommentId || null,
     });
 
     if (response.data.error) {

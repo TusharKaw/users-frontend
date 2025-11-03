@@ -15,11 +15,52 @@ export async function GET(request: NextRequest) {
     }
 
     const db = getDatabase();
-    const comments = db
-      .prepare('SELECT * FROM comments WHERE pageId = ? ORDER BY createdAt DESC')
-      .all(parseInt(pageId));
+    // Get all comments for the page
+    const allComments = db
+      .prepare('SELECT * FROM comments WHERE pageId = ? ORDER BY createdAt ASC')
+      .all(parseInt(pageId)) as Array<{
+        id: number;
+        pageId: number;
+        pageTitle: string;
+        text: string;
+        author: string;
+        parentCommentId: number | null;
+        createdAt: string;
+        updatedAt: string;
+      }>;
 
-    return NextResponse.json({ comments });
+    // Build nested structure: separate top-level comments and replies
+    const topLevelComments = allComments.filter(c => !c.parentCommentId);
+    const repliesMap = new Map<number, Array<typeof allComments[0]>>();
+    
+    // Group replies by parent comment ID
+    allComments.forEach(comment => {
+      if (comment.parentCommentId) {
+        if (!repliesMap.has(comment.parentCommentId)) {
+          repliesMap.set(comment.parentCommentId, []);
+        }
+        repliesMap.get(comment.parentCommentId)!.push(comment);
+      }
+    });
+
+    // Build nested structure
+    const buildCommentTree = (comment: typeof allComments[0]) => {
+      const replies = repliesMap.get(comment.id) || [];
+      return {
+        id: comment.id,
+        pageId: comment.pageId,
+        text: comment.text,
+        author: comment.author,
+        createdAt: comment.createdAt,
+        timestamp: comment.createdAt,
+        parentCommentId: comment.parentCommentId,
+        replies: replies.map(buildCommentTree),
+      };
+    };
+
+    const nestedComments = topLevelComments.map(buildCommentTree);
+
+    return NextResponse.json({ comments: nestedComments });
   } catch (error: any) {
     console.error('Error fetching comments:', error);
     return NextResponse.json(
@@ -32,7 +73,9 @@ export async function GET(request: NextRequest) {
 // POST /api/comments
 export async function POST(request: NextRequest) {
   try {
-    const { pageId, pageTitle, text, author } = await request.json();
+    const { pageId, pageTitle, text, author, parentCommentId } = await request.json();
+
+    console.log('Creating comment:', { pageId, parentCommentId, hasText: !!text, author });
 
     if (!pageId || !text) {
       return NextResponse.json(
@@ -42,16 +85,45 @@ export async function POST(request: NextRequest) {
     }
 
     const db = getDatabase();
+
+    // If parentCommentId is provided, verify it exists and belongs to the same page
+    if (parentCommentId) {
+      console.log('Validating parent comment:', parentCommentId);
+      const parentComment = db
+        .prepare('SELECT id, pageId FROM comments WHERE id = ?')
+        .get(parentCommentId) as { id: number; pageId: number } | undefined;
+      
+      if (!parentComment) {
+        console.error('Parent comment not found:', parentCommentId);
+        return NextResponse.json(
+          { error: 'Parent comment not found' },
+          { status: 404 }
+        );
+      }
+      
+      if (parentComment.pageId !== parseInt(pageId)) {
+        console.error('Parent comment pageId mismatch:', parentComment.pageId, 'vs', pageId);
+        return NextResponse.json(
+          { error: 'Parent comment does not belong to this page' },
+          { status: 400 }
+        );
+      }
+    }
+
+    console.log('Inserting comment into database...');
     const result = db
       .prepare(
-        'INSERT INTO comments (pageId, pageTitle, text, author) VALUES (?, ?, ?, ?)'
+        'INSERT INTO comments (pageId, pageTitle, text, author, parentCommentId) VALUES (?, ?, ?, ?, ?)'
       )
       .run(
         parseInt(pageId),
         pageTitle || `Page ${pageId}`,
         text.trim(),
-        author || 'Anonymous'
+        author || 'Anonymous',
+        parentCommentId || null
       );
+
+    console.log('Comment created with ID:', result.lastInsertRowid);
 
     // Fetch the newly created comment
     const comment = db

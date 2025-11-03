@@ -66,10 +66,30 @@ function initializeSchema(database: Database.Database) {
       pageTitle TEXT NOT NULL,
       text TEXT NOT NULL,
       author TEXT NOT NULL DEFAULT 'Anonymous',
+      parentCommentId INTEGER,
       createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
-      updatedAt DATETIME DEFAULT CURRENT_TIMESTAMP
+      updatedAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (parentCommentId) REFERENCES comments(id) ON DELETE CASCADE
     )
   `);
+
+  // Migrations: Add parentCommentId column if it doesn't exist
+  try {
+    const tableInfo = database.prepare(`PRAGMA table_info(comments)`).all() as Array<{ name: string }>;
+    const hasParentCommentId = tableInfo.some(col => col.name === 'parentCommentId');
+    
+    if (!hasParentCommentId) {
+      console.log('Adding parentCommentId column to comments table...');
+      database.exec(`
+        ALTER TABLE comments ADD COLUMN parentCommentId INTEGER;
+      `);
+      // Add foreign key constraint (SQLite doesn't support adding FK after table creation, so we skip it)
+      // The FK will be enforced by the application logic
+    }
+  } catch (error: any) {
+    console.error('Error migrating comments table:', error);
+    // Continue anyway - column might already exist
+  }
 
   // Ratings table
   database.exec(`
@@ -97,6 +117,7 @@ function initializeSchema(database: Database.Database) {
     CREATE INDEX IF NOT EXISTS idx_sessions_userId ON sessions(userId);
     CREATE INDEX IF NOT EXISTS idx_sessions_expiresAt ON sessions(expiresAt);
     CREATE INDEX IF NOT EXISTS idx_comments_pageId ON comments(pageId);
+    CREATE INDEX IF NOT EXISTS idx_comments_parentCommentId ON comments(parentCommentId);
     CREATE INDEX IF NOT EXISTS idx_ratings_pageId ON ratings(pageId);
     CREATE INDEX IF NOT EXISTS idx_ratings_pageId_author ON ratings(pageId, author);
   `);
