@@ -36,6 +36,9 @@ export interface Comment {
   timestamp: string;
   parentCommentId?: number | null;
   replies?: Comment[];
+  upvotes?: number;
+  downvotes?: number;
+  userVote?: number | null; // 1 for upvote, -1 for downvote, null for no vote
 }
 
 export interface Rating {
@@ -319,6 +322,9 @@ export async function getComments(pageId: number): Promise<Comment[]> {
       author: c.author || 'Anonymous',
       timestamp: c.createdAt || c.timestamp || new Date().toISOString(),
       parentCommentId: c.parentCommentId || null,
+      upvotes: c.upvotes || 0,
+      downvotes: c.downvotes || 0,
+      userVote: c.userVote !== undefined ? c.userVote : null,
       replies: c.replies ? c.replies.map((r: any): Comment => ({
         id: r.id || 0,
         pageId: r.pageId || pageId,
@@ -326,6 +332,9 @@ export async function getComments(pageId: number): Promise<Comment[]> {
         author: r.author || 'Anonymous',
         timestamp: r.createdAt || r.timestamp || new Date().toISOString(),
         parentCommentId: r.parentCommentId || null,
+        upvotes: r.upvotes || 0,
+        downvotes: r.downvotes || 0,
+        userVote: r.userVote !== undefined ? r.userVote : null,
         replies: r.replies || [],
       })) : [],
     }));
@@ -364,6 +373,48 @@ export async function addComment(pageId: number, text: string, pageTitle?: strin
     return { 
       success: false, 
       error: typeof errorMsg === 'string' ? errorMsg : 'Failed to add comment'
+    };
+  }
+}
+
+/**
+ * Vote on a comment (upvote or downvote)
+ */
+export async function voteComment(commentId: number, vote: 1 | -1): Promise<{ 
+  success: boolean; 
+  upvotes?: number; 
+  downvotes?: number; 
+  userVote?: number | null;
+  error?: string 
+}> {
+  try {
+    const response = await axios.post('/api/comments/vote', {
+      commentId,
+      vote,
+    }, {
+      withCredentials: true,
+    });
+
+    if (response.data.error) {
+      const errorMsg = typeof response.data.error === 'string' 
+        ? response.data.error 
+        : response.data.error || 'Failed to vote on comment';
+      console.error('Error voting on comment:', errorMsg);
+      return { success: false, error: errorMsg };
+    }
+
+    return { 
+      success: true,
+      upvotes: response.data.upvotes || 0,
+      downvotes: response.data.downvotes || 0,
+      userVote: response.data.userVote || null,
+    };
+  } catch (error: any) {
+    const errorMsg = error.response?.data?.error || error.message || 'Failed to vote on comment';
+    console.error('Error voting on comment:', errorMsg, error.response?.data);
+    return { 
+      success: false, 
+      error: typeof errorMsg === 'string' ? errorMsg : 'Failed to vote on comment'
     };
   }
 }

@@ -149,6 +149,9 @@ export default function CommentSection({ pageId, pageTitle }: CommentSectionProp
                 onReplySubmitted={() => {
                   mutate(undefined, { revalidate: true });
                 }}
+                onVoteSubmitted={() => {
+                  mutate(undefined, { revalidate: true });
+                }}
               />
             </div>
           ))

@@ -110,6 +110,19 @@ function initializeSchema(database: Database.Database) {
     ON ratings(pageId, author)
   `);
 
+  // Comment votes table
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS comment_votes (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      commentId INTEGER NOT NULL,
+      author TEXT NOT NULL,
+      vote INTEGER NOT NULL CHECK(vote IN (1, -1)),
+      createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (commentId) REFERENCES comments(id) ON DELETE CASCADE,
+      UNIQUE(commentId, author)
+    )
+  `);
+
   // Create indexes for better performance
   database.exec(`
     CREATE INDEX IF NOT EXISTS idx_users_username ON users(username);
@@ -120,6 +133,8 @@ function initializeSchema(database: Database.Database) {
     CREATE INDEX IF NOT EXISTS idx_comments_parentCommentId ON comments(parentCommentId);
     CREATE INDEX IF NOT EXISTS idx_ratings_pageId ON ratings(pageId);
     CREATE INDEX IF NOT EXISTS idx_ratings_pageId_author ON ratings(pageId, author);
+    CREATE INDEX IF NOT EXISTS idx_comment_votes_commentId ON comment_votes(commentId);
+    CREATE INDEX IF NOT EXISTS idx_comment_votes_commentId_author ON comment_votes(commentId, author);
   `);
 }
 

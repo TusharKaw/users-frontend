@@ -15,6 +15,13 @@ export async function GET(request: NextRequest) {
     }
 
     const db = getDatabase();
+    
+    // Get current user for vote information
+    const { getCurrentUser } = await import('@/lib/auth');
+    const sessionId = request.cookies.get('sessionId')?.value;
+    const currentUser = await getCurrentUser(sessionId);
+    const author = currentUser ? (currentUser.realname || currentUser.username) : null;
+
     // Get all comments for the page
     const allComments = db
       .prepare('SELECT * FROM comments WHERE pageId = ? ORDER BY createdAt ASC')
@@ -43,9 +50,35 @@ export async function GET(request: NextRequest) {
       }
     });
 
+    // Helper function to get vote counts and user vote for a comment
+    const getVoteData = (commentId: number) => {
+      const upvotes = db
+        .prepare('SELECT COUNT(*) as count FROM comment_votes WHERE commentId = ? AND vote = 1')
+        .get(commentId) as { count: number };
+      
+      const downvotes = db
+        .prepare('SELECT COUNT(*) as count FROM comment_votes WHERE commentId = ? AND vote = -1')
+        .get(commentId) as { count: number };
+
+      let userVote: number | null = null;
+      if (author) {
+        const userVoteRow = db
+          .prepare('SELECT vote FROM comment_votes WHERE commentId = ? AND author = ?')
+          .get(commentId, author) as { vote: number } | undefined;
+        userVote = userVoteRow?.vote || null;
+      }
+
+      return {
+        upvotes: upvotes.count,
+        downvotes: downvotes.count,
+        userVote,
+      };
+    };
+
     // Build nested structure
     const buildCommentTree = (comment: typeof allComments[0]) => {
       const replies = repliesMap.get(comment.id) || [];
+      const voteData = getVoteData(comment.id);
       return {
         id: comment.id,
         pageId: comment.pageId,
@@ -54,6 +87,9 @@ export async function GET(request: NextRequest) {
         createdAt: comment.createdAt,
         timestamp: comment.createdAt,
         parentCommentId: comment.parentCommentId,
+        upvotes: voteData.upvotes,
+        downvotes: voteData.downvotes,
+        userVote: voteData.userVote,
         replies: replies.map(buildCommentTree),
       };
     };
