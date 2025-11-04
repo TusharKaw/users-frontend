@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { createPage } from '@/lib/mediawiki';
+import axios from 'axios';
 
 export default function CreatePage() {
   const router = useRouter();
@@ -39,7 +40,55 @@ export default function CreatePage() {
 
       const result = await createPage(formData.title.trim(), content);
 
-      if (result.success) {
+      if (result.success && result.pageId) {
+        // Store page creator - use creator from result (set by server) or fallback to client-side check
+        let creator = result.creator;
+        
+        if (!creator) {
+          // Fallback: get creator from client-side
+          try {
+            const userResponse = await axios.get('/api/auth/user', {
+              withCredentials: true,
+            });
+            if (userResponse.data.loggedIn && userResponse.data.user) {
+              creator = userResponse.data.user.realname || userResponse.data.user.username;
+            }
+          } catch {
+            // User not logged in - that's okay
+          }
+        }
+        
+        // Store page creator if we have one
+        if (creator) {
+          try {
+            console.log('Storing page creator:', {
+              pageId: result.pageId,
+              pageTitle: formData.title.trim(),
+              creator: creator,
+            });
+            const creatorResponse = await axios.post('/api/pages/creator', {
+              pageId: result.pageId,
+              pageTitle: formData.title.trim(),
+              creator: creator,
+            }, {
+              withCredentials: true,
+            });
+            console.log('Creator stored successfully:', creatorResponse.data);
+            
+            // Verify it was stored
+            const verifyResponse = await axios.get('/api/pages/creator', {
+              params: { pageId: result.pageId },
+            });
+            console.log('Verified stored creator:', verifyResponse.data.creator);
+          } catch (err: any) {
+            console.error('Failed to store page creator:', err);
+            console.error('Error details:', err.response?.data);
+            // Non-critical error - continue anyway
+          }
+        } else {
+          console.warn('No creator to store - user not logged in');
+        }
+        
         // Navigate to the new page
         const slug = encodeURIComponent(formData.title.trim().replace(/\s+/g, '_'));
         router.push(`/${slug}`);
@@ -165,4 +214,5 @@ export default function CreatePage() {
     </div>
   );
 }
+
 

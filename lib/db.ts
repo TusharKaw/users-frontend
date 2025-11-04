@@ -110,6 +110,25 @@ function initializeSchema(database: Database.Database) {
     ON ratings(pageId, author)
   `);
 
+  // Page creators table (to track who created which page)
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS page_creators (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      pageId INTEGER NOT NULL,
+      pageTitle TEXT NOT NULL,
+      creator TEXT NOT NULL,
+      createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(pageId, pageTitle)
+    )
+  `);
+
+  // Create indexes for page creators
+  database.exec(`
+    CREATE INDEX IF NOT EXISTS idx_page_creators_pageId ON page_creators(pageId);
+    CREATE INDEX IF NOT EXISTS idx_page_creators_creator ON page_creators(creator);
+    CREATE INDEX IF NOT EXISTS idx_page_creators_pageTitle ON page_creators(pageTitle);
+  `);
+
   // Comment votes table
   database.exec(`
     CREATE TABLE IF NOT EXISTS comment_votes (

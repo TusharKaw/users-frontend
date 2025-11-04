@@ -21,9 +21,16 @@ export async function POST(request: NextRequest) {
       headers['Cookie'] = cookieHeader;
     }
 
+    // Get current user from Next.js session for MediaWiki operations
+    const { getCurrentUser } = await import('@/lib/auth');
+    const sessionId = request.cookies.get('sessionId')?.value;
+    const currentUser = await getCurrentUser(sessionId);
+    
     // Get edit token if not provided
     let editToken = token;
     if (!editToken) {
+      // Try to get token - this should work with anonymous editing enabled
+      // OR with proper MediaWiki user authentication
       const tokenResponse = await axios.get(API_URL, {
         params: {
           action: 'query',
@@ -39,12 +46,16 @@ export async function POST(request: NextRequest) {
       // Check if we got a proper token response
       if (tokenResponse.data.error) {
         console.error('Token fetch error:', tokenResponse.data.error);
+        // If token fetch fails, it might be because anonymous editing is disabled
+        // But since we're using local auth, we need to inform the user
         return NextResponse.json(
           { 
-            error: tokenResponse.data.error.info || 'Failed to get edit token. You may need to log in to MediaWiki.',
-            details: tokenResponse.data.error 
+            error: 'Unable to edit pages. Please ensure MediaWiki allows API-based editing. All authentication is handled by this platform, not MediaWiki.',
+            code: 'TOKEN_FETCH_FAILED',
+            details: tokenResponse.data.error,
+            suggestion: 'MediaWiki should allow editing via API. Check your MediaWiki LocalSettings.php configuration.'
           },
-          { status: 401 }
+          { status: 403 }
         );
       }
     }
@@ -53,12 +64,13 @@ export async function POST(request: NextRequest) {
     // MediaWiki returns '+\\' when anonymous editing is disabled or token is invalid
     if (!editToken || editToken === '+\\' || editToken.length < 10) {
       console.error('Invalid token received from MediaWiki:', editToken);
-      console.error('This usually means anonymous editing is disabled in MediaWiki');
+      console.error('Current user:', currentUser?.username);
       return NextResponse.json(
         { 
-          error: 'MediaWiki does not allow anonymous editing. Please enable anonymous editing in MediaWiki LocalSettings.php or log in to MediaWiki first.',
-          code: 'ANONYMOUS_EDITING_DISABLED',
-          details: 'Add this to your LocalSettings.php: $wgGroupPermissions[\'*\'][\'edit\'] = true;'
+          error: 'Unable to edit pages. MediaWiki API requires proper configuration. All user authentication is handled by this platform - users do not need to log in to MediaWiki separately.',
+          code: 'INVALID_TOKEN',
+          details: 'MediaWiki needs to allow API-based editing. This platform handles all authentication internally.',
+          username: currentUser ? (currentUser.realname || currentUser.username) : 'Anonymous'
         },
         { status: 403 }
       );
@@ -109,12 +121,61 @@ export async function POST(request: NextRequest) {
 
     // Check if edit was successful
     if (response.data.edit && response.data.edit.result === 'Success') {
+      const pageId = response.data.edit.pageid;
+      const createdTitle = response.data.edit.title || response.data.edit.newtitle || title;
+      
+      // Default: Protect the page after creation
+      try {
+        // Get protect token
+        const protectTokenResponse = await axios.get(API_URL, {
+          params: {
+            action: 'query',
+            meta: 'tokens',
+            type: 'csrf',
+            format: 'json',
+          },
+          headers,
+        });
+        
+        const protectToken = (protectTokenResponse.data as any).query?.tokens?.csrftoken || '';
+        
+        if (protectToken && protectToken !== '+\\') {
+          // Protect the page by default (only logged-in users can edit)
+          const protectFormData = new URLSearchParams();
+          protectFormData.append('action', 'protect');
+          protectFormData.append('title', createdTitle);
+          protectFormData.append('token', protectToken);
+          protectFormData.append('protections', 'edit=autoconfirmed');
+          protectFormData.append('reason', 'Page protected by default');
+          protectFormData.append('format', 'json');
+
+          await axios.post(API_URL, protectFormData.toString(), {
+            headers: {
+              ...headers,
+              'Content-Type': 'application/x-www-form-urlencoded',
+            },
+          });
+          
+          console.log('Page protected by default:', createdTitle);
+        }
+      } catch (protectError) {
+        console.warn('Failed to protect page by default (non-critical):', protectError);
+        // Continue anyway - page was created successfully
+      }
+      
+      // Return response with creator info if available
+      const { getCurrentUser } = await import('@/lib/auth');
+      const sessionId = request.cookies.get('sessionId')?.value;
+      const currentUser = await getCurrentUser(sessionId);
+      const creator = currentUser ? (currentUser.realname || currentUser.username) : null;
+      
       return NextResponse.json({ 
         success: true, 
         data: response.data,
-        pageId: response.data.edit.pageid,
+        pageId: pageId,
         newRevId: response.data.edit.newrevid,
-        title: response.data.edit.title || response.data.edit.newtitle || title
+        title: createdTitle,
+        creator: creator, // Include creator in response
       });
     }
 

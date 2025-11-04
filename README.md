@@ -14,9 +14,17 @@ A Glassdoor-style website built with Next.js 14 that connects to a MediaWiki bac
 
 - Node.js 18+ and npm/yarn
 - MediaWiki instance running at `http://localhost:8000/api.php`
-- MediaWiki extensions (optional but recommended):
-  - CommentStreams (for comments)
-  - PageRating or VoteNY (for ratings)
+- **Important:** MediaWiki must be configured to allow API-based editing. Add this to your MediaWiki `LocalSettings.php`:
+  ```php
+  // Allow anonymous editing via API (required for this platform)
+  $wgGroupPermissions['*']['edit'] = true;
+  $wgGroupPermissions['*']['createpage'] = true;
+  
+  // Allow API-based editing
+  $wgEnableWriteAPI = true;
+  ```
+  
+  **Note:** All user authentication is handled by this Next.js platform. Users do NOT need to log in to MediaWiki separately. MediaWiki is used purely as a backend content store.
 
 ## Setup
 

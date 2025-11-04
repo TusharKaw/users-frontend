@@ -6,6 +6,7 @@ export interface MediaWikiPage {
   pageid: number;
   title: string;
   extract?: string;
+  content?: string; // Raw wikitext content for editing
   thumbnail?: {
     source: string;
     width: number;
@@ -52,7 +53,7 @@ export interface Rating {
  */
 export async function getArticle(slug: string): Promise<MediaWikiPage | null> {
   try {
-    // First, get page info and images
+    // First, get page info and images with raw content
     const pageResponse = await axios.get<MediaWikiQueryResponse>(API_URL, {
       params: {
         action: 'query',
@@ -61,8 +62,9 @@ export async function getArticle(slug: string): Promise<MediaWikiPage | null> {
         format: 'json',
         piprop: 'thumbnail|original',
         pithumbsize: 400,
-        rvprop: 'content',
+        rvprop: 'content|timestamp|user|comment|ids',
         rvslots: 'main',
+        rvlimit: 1,
         origin: '*',
       },
     });
@@ -77,6 +79,75 @@ export async function getArticle(slug: string): Promise<MediaWikiPage | null> {
 
     const pageData = Object.values(pages)[0] as any;
     if (!pageData || pageData.pageid === undefined) return null;
+
+    // Get raw wikitext content from revisions
+    let content = '';
+    const revisions = pageData.revisions;
+    
+    // Try multiple formats to get content
+    if (revisions && Array.isArray(revisions) && revisions.length > 0) {
+      const rev = revisions[0];
+      
+      // Debug: log the full revision structure
+      console.log('Revision structure:', JSON.stringify(rev, null, 2));
+      
+      // Try different possible locations for content
+      if (rev.slots?.main?.content) {
+        content = rev.slots.main.content;
+        console.log('Found content in rev.slots.main.content');
+      } else if (rev.slots?.main?.['*']) {
+        content = rev.slots.main['*'];
+        console.log('Found content in rev.slots.main[*]');
+      } else if (rev['*']) {
+        // Fallback: try older revision format
+        content = rev['*'];
+        console.log('Found content in rev[*]');
+      } else if (rev.content) {
+        // Another fallback
+        content = rev.content;
+        console.log('Found content in rev.content');
+      } else {
+        // Last resort: try to get content via a separate API call
+        console.log('No content in revision, trying direct content fetch...');
+        try {
+          const contentResponse = await axios.get(API_URL, {
+            params: {
+              action: 'query',
+              prop: 'revisions',
+              titles: slug,
+              rvprop: 'content',
+              rvslots: 'main',
+              rvlimit: 1,
+              format: 'json',
+              origin: '*',
+            },
+          });
+          
+          const contentPages = contentResponse.data.query?.pages;
+          if (contentPages) {
+            const contentPageData = Object.values(contentPages)[0] as any;
+            if (contentPageData?.revisions?.[0]?.slots?.main?.content) {
+              content = contentPageData.revisions[0].slots.main.content;
+              console.log('Found content via separate API call');
+            }
+          }
+        } catch (contentError) {
+          console.warn('Failed to fetch content via separate call:', contentError);
+        }
+      }
+    } else {
+      console.log('No revisions found or revisions is not an array');
+    }
+    
+    console.log('Raw content fetched:', {
+      hasRevisions: !!revisions,
+      isArray: Array.isArray(revisions),
+      revisionCount: revisions?.length || 0,
+      hasContent: !!content,
+      contentLength: content.length,
+      preview: content ? `${content.substring(0, 100)}...` : 'empty',
+      revisionStructure: revisions?.[0] ? Object.keys(revisions[0]) : []
+    });
 
     // Get parsed HTML content using parse action
     let extract = '';
@@ -96,17 +167,14 @@ export async function getArticle(slug: string): Promise<MediaWikiPage | null> {
         extract = parseResponse.data.parse.text['*'];
       }
     } catch (parseError) {
-      console.warn('Failed to get parsed content, trying revisions:', parseError);
-      // Fallback: use raw wikitext from revisions if parse fails
-      const revisions = pageData.revisions;
-      if (revisions && revisions[0]?.slots?.main?.content) {
-        extract = revisions[0].slots.main.content;
-      }
+      console.warn('Failed to get parsed content, using raw content as fallback:', parseError);
+      // If parse fails, we still have the raw content from revisions
     }
 
     return {
       pageid: pageData.pageid,
       title: pageData.title,
+      content: content,
       extract: extract || undefined,
       thumbnail: pageData.thumbnail ? {
         source: pageData.thumbnail.source,
@@ -483,13 +551,15 @@ export async function ratePage(pageId: number, rating: number, pageTitle?: strin
 /**
  * Create a new page
  */
-export async function createPage(title: string, content: string, token?: string): Promise<{ success: boolean; error?: string }> {
+export async function createPage(title: string, content: string, token?: string): Promise<{ success: boolean; error?: string; pageId?: number; creator?: string }> {
   try {
     // Call Next.js API route which handles MediaWiki API call server-side
     const response = await axios.post('/api/mediawiki/create', {
       title,
       content,
       token,
+    }, {
+      withCredentials: true,
     });
 
     if (response.data.error) {
@@ -500,13 +570,197 @@ export async function createPage(title: string, content: string, token?: string)
       return { success: false, error: errorMsg };
     }
 
-    return { success: response.data.success === true };
+    return { 
+      success: response.data.success === true,
+      pageId: response.data.pageId,
+      creator: response.data.creator,
+    };
   } catch (error: any) {
     const errorMsg = error.response?.data?.error || error.message || 'Failed to create page';
     console.error('Error creating page:', errorMsg, error.response?.data?.details);
     return { 
       success: false, 
       error: typeof errorMsg === 'string' ? errorMsg : errorMsg?.info || 'Failed to create page'
+    };
+  }
+}
+
+/**
+ * Edit an existing page
+ */
+export async function editPage(title: string, content: string, token?: string): Promise<{ success: boolean; error?: string }> {
+  try {
+    // Call Next.js API route which handles MediaWiki API call server-side
+    // MediaWiki edit API works the same way for new and existing pages
+    const response = await axios.post('/api/mediawiki/edit', {
+      title,
+      content,
+      token,
+    });
+
+    if (response.data.error) {
+      const errorMsg = typeof response.data.error === 'string' 
+        ? response.data.error 
+        : response.data.error?.info || 'Failed to edit page';
+      console.error('Error editing page:', errorMsg, response.data.details);
+      return { success: false, error: errorMsg };
+    }
+
+    return { success: response.data.success === true };
+  } catch (error: any) {
+    const errorMsg = error.response?.data?.error || error.message || 'Failed to edit page';
+    console.error('Error editing page:', errorMsg, error.response?.data?.details);
+    return { 
+      success: false, 
+      error: typeof errorMsg === 'string' ? errorMsg : errorMsg?.info || 'Failed to edit page'
+    };
+  }
+}
+
+export interface Revision {
+  revid: number;
+  parentid: number;
+  user: string;
+  timestamp: string;
+  comment: string;
+  size: number;
+  content?: string;
+}
+
+/**
+ * Get revision history for a page
+ */
+export async function getPageHistory(title: string, limit: number = 50): Promise<Revision[]> {
+  try {
+    const response = await axios.get(API_URL, {
+      params: {
+        action: 'query',
+        prop: 'revisions',
+        titles: title,
+        rvprop: 'ids|timestamp|user|comment|size|content',
+        rvslots: 'main',
+        rvlimit: limit,
+        format: 'json',
+        origin: '*',
+      },
+    });
+
+    if (response.data.error) {
+      console.error('Error fetching revision history:', response.data.error);
+      return [];
+    }
+
+    const pages = response.data.query?.pages;
+    if (!pages) return [];
+
+    const pageData = Object.values(pages)[0] as any;
+    if (!pageData || !pageData.revisions) return [];
+
+    return pageData.revisions.map((rev: any) => ({
+      revid: rev.revid,
+      parentid: rev.parentid || 0,
+      user: rev.user || 'Unknown',
+      timestamp: rev.timestamp,
+      comment: rev.comment || '',
+      size: rev.size || 0,
+      content: rev.slots?.main?.content || rev['*'] || '',
+    }));
+  } catch (error) {
+    console.error('Error fetching revision history:', error);
+    return [];
+  }
+}
+
+/**
+ * Get page protection status and creator info
+ */
+export async function getPageInfo(title: string): Promise<{
+  protected: boolean;
+  protection?: Array<{ type: string; level: string; expiry: string }>;
+  creator?: string;
+  created?: string;
+} | null> {
+  try {
+    const response = await axios.get(API_URL, {
+      params: {
+        action: 'query',
+        prop: 'info|revisions',
+        titles: title,
+        inprop: 'protection',
+        rvprop: 'user|timestamp',
+        rvdir: 'newer',
+        rvlimit: 1,
+        format: 'json',
+        origin: '*',
+      },
+    });
+
+    if (response.data.error) {
+      console.error('Error fetching page info:', response.data.error);
+      return null;
+    }
+
+    const pages = response.data.query?.pages;
+    if (!pages) return null;
+
+    const pageData = Object.values(pages)[0] as any;
+    if (!pageData) return null;
+
+    const protection = pageData.protection || [];
+    const isProtected = protection.length > 0;
+
+    // Get creator from first revision
+    const creator = pageData.revisions?.[0]?.user || null;
+    const created = pageData.revisions?.[0]?.timestamp || null;
+
+    return {
+      protected: isProtected,
+      protection: protection.map((p: any) => ({
+        type: p.type,
+        level: p.level,
+        expiry: p.expiry,
+      })),
+      creator,
+      created,
+    };
+  } catch (error) {
+    console.error('Error fetching page info:', error);
+    return null;
+  }
+}
+
+/**
+ * Protect or unprotect a page
+ */
+export async function setPageProtection(
+  title: string,
+  protect: boolean,
+  token?: string
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    const response = await axios.post('/api/mediawiki/protect', {
+      title,
+      protect,
+      token,
+    }, {
+      withCredentials: true,
+    });
+
+    if (response.data.error) {
+      const errorMsg = typeof response.data.error === 'string' 
+        ? response.data.error 
+        : response.data.error?.info || 'Failed to set page protection';
+      console.error('Error setting page protection:', errorMsg);
+      return { success: false, error: errorMsg };
+    }
+
+    return { success: response.data.success === true };
+  } catch (error: any) {
+    const errorMsg = error.response?.data?.error || error.message || 'Failed to set page protection';
+    console.error('Error setting page protection:', errorMsg);
+    return { 
+      success: false, 
+      error: typeof errorMsg === 'string' ? errorMsg : errorMsg?.info || 'Failed to set page protection'
     };
   }
 }

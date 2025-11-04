@@ -4,6 +4,7 @@ import { getArticle } from '@/lib/mediawiki';
 import RatingStars from '@/components/RatingStars';
 import CommentSection from '@/components/CommentSection';
 import Link from 'next/link';
+import EditButton from '@/components/EditButton';
 
 interface ArticlePageProps {
   params: Promise<{ slug: string }>;
@@ -31,9 +32,12 @@ export default async function ArticlePage({ params }: ArticlePageProps) {
 
       <article className="bg-white rounded-lg shadow-md overflow-hidden mb-6">
         <div className="p-8">
-          <h1 className="text-4xl font-bold text-gray-900 mb-4">
-            {page.title}
-          </h1>
+          <div className="flex items-center justify-between mb-4">
+            <h1 className="text-4xl font-bold text-gray-900">
+              {page.title}
+            </h1>
+            <EditButton pageTitle={page.title} />
+          </div>
 
           {imageUrl && (
             <div className="relative w-full h-64 md:h-96 mb-6 rounded-lg overflow-hidden">
